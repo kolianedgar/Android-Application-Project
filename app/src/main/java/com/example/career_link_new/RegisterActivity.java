@@ -14,6 +14,10 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseAuthUserCollisionException;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+
+import java.util.HashMap;
 
 public class RegisterActivity extends AppCompatActivity {
 
@@ -22,6 +26,9 @@ public class RegisterActivity extends AppCompatActivity {
     TextView login_redirect;
     FirebaseAuth mAuth;
     FirebaseUser mUser;
+    DatabaseReference usersRef = FirebaseDatabase
+            .getInstance("https://careerlink-6ce4f-default-rtdb.europe-west1.firebasedatabase.app")
+            .getReference("users");
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -37,6 +44,8 @@ public class RegisterActivity extends AppCompatActivity {
 
         mAuth = FirebaseAuth.getInstance();
         mUser = mAuth.getCurrentUser();
+
+
 
         login_redirect.setOnClickListener(v -> {
             Intent redirect_login = new Intent(getApplicationContext(), LoginActivity.class);
@@ -65,7 +74,7 @@ public class RegisterActivity extends AppCompatActivity {
         String fullName = String.valueOf(full_name_input.getText()).trim();
 
         if (fullName.isEmpty()) {
-            full_name_input.setError("Please enter your full name");
+            full_name_input.setError("Full name required");
             full_name_input.requestFocus();
             return;
         }
@@ -134,28 +143,56 @@ public class RegisterActivity extends AppCompatActivity {
         // ✅ All validation passed — now Firebase
         mAuth.createUserWithEmailAndPassword(email, password)
                 .addOnCompleteListener(task -> {
-                    if (task.isSuccessful()) {
-                        send_verification_email();
-                        Toast.makeText(this,
-                                "Registration successful. Check your email.",
-                                Toast.LENGTH_SHORT).show();
-                        send_user_to_next_activity();
-                    } else {
+                    if (!task.isSuccessful()) {
                         Exception e = task.getException();
-                        Toast.makeText(this,
-                                e != null ? e.getMessage() : "Registration failed",
-                                Toast.LENGTH_LONG).show();
+
+                        if (e instanceof FirebaseAuthUserCollisionException) {
+                            email_input.setError("Email already registered");
+                            email_input.requestFocus();
+                        } else {
+                            Toast.makeText(
+                                    this,
+                                    e != null ? e.getMessage() : "Registration failed",
+                                    Toast.LENGTH_LONG
+                            ).show();
+                        }
+                        return;
                     }
-                })
-                .addOnFailureListener(e -> {
-                    if (e instanceof FirebaseAuthUserCollisionException) {
-                        email_input.setError("Email already registered");
-                        email_input.requestFocus();
-                    } else {
-                        Toast.makeText(this,
-                                "Oops! Something went wrong",
-                                Toast.LENGTH_SHORT).show();
-                    }
+
+                    FirebaseUser firebaseUser = mAuth.getCurrentUser();
+                    if (firebaseUser == null) return;
+
+                    send_verification_email();
+
+                    String uid = firebaseUser.getUid();
+
+                    HashMap<String, Object> userMap = new HashMap<>();
+                    userMap.put("fullName", fullName);
+                    userMap.put("email", firebaseUser.getEmail());
+                    userMap.put("createdAt", System.currentTimeMillis());
+
+                    usersRef.child(uid).setValue(userMap)
+                            .addOnSuccessListener(aVoid -> {
+                                Toast.makeText(
+                                        RegisterActivity.this,
+                                        "Registration successful. Please verify your email.",
+                                        Toast.LENGTH_SHORT
+                                ).show();
+
+                                Intent intent =
+                                        new Intent(RegisterActivity.this, LoginActivity.class);
+                                intent.setFlags(
+                                        Intent.FLAG_ACTIVITY_NEW_TASK |
+                                                Intent.FLAG_ACTIVITY_CLEAR_TASK
+                                );
+                                startActivity(intent);
+                                finish();
+                            })
+                            .addOnFailureListener(e -> Toast.makeText(
+                                    RegisterActivity.this,
+                                    "User created but failed to save profile data",
+                                    Toast.LENGTH_LONG
+                            ).show());
                 });
     }
 
@@ -167,11 +204,5 @@ public class RegisterActivity extends AppCompatActivity {
                 }
             });
         }
-    }
-
-    private void send_user_to_next_activity() {
-        Intent intent = new Intent(getApplicationContext(), LoginActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK|Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(intent);
     }
 }
