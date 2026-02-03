@@ -13,7 +13,9 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Career_link_new"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="false"
+        android:resizeableActivity="true"
+        android:largeHeap="true">
         <activity
             android:name=".RegisterActivity"
             android:exported="false"

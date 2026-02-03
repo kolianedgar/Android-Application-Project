@@ -235,6 +235,13 @@ public class MainActivity extends AppCompatActivity {
                         // Back button disabled
                     }
                 });
+
+        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
+            Intent intent = new Intent(this, LoginActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+            finish();
+        }
     }
 
     private void writeMessageToDatabase(String userName, String message, MessageWriteCallback callback) {

@@ -41,9 +41,12 @@ public class LoginActivity extends AppCompatActivity {
         sharedPreferences = getSharedPreferences("autoLogin", Context.MODE_PRIVATE);
         int j = sharedPreferences.getInt("key", 0);
 
-        if(j > 0){
-            Intent redirect_homepage = new Intent(getApplicationContext(), MainActivity.class);
+        if (j > 0) {
+            Intent redirect_homepage = new Intent(this, MainActivity.class);
+            redirect_homepage.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             startActivity(redirect_homepage);
+            finish();
+            return;
         }
         register_button.setOnClickListener(v -> {
             try{
@@ -65,6 +68,16 @@ public class LoginActivity extends AppCompatActivity {
 
         Submit.setOnClickListener(v -> perform_login());
 
+        getOnBackPressedDispatcher().addCallback(
+                this,
+                new androidx.activity.OnBackPressedCallback(true) {
+                    @Override
+                    public void handleOnBackPressed() {
+                        // Completely block back navigation
+                        finishAffinity(); // closes the app instead of going back
+                    }
+                }
+        );
     }
 
     private void perform_login() {
@@ -112,8 +125,9 @@ public class LoginActivity extends AppCompatActivity {
 
     }
     private void send_user_to_next_activity() {
-        Intent intent = new Intent(getApplicationContext(), MainActivity.class);
-        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK|Intent.FLAG_ACTIVITY_NEW_TASK);
+        Intent intent = new Intent(this, MainActivity.class);
+        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(intent);
+        finish();
     }
 }
