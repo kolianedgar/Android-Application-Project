@@ -2,9 +2,7 @@ package com.example.career_link_new;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.util.Log;
 import android.util.Patterns;
@@ -17,37 +15,38 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
 
+import java.util.Objects;
+
 public class LoginActivity extends AppCompatActivity {
-    private int autoSave;
     TextInputEditText Email, Password;
     Button Submit;
     TextView register_button;
     LinearLayout login_layout;
     String email, password;
     FirebaseAuth mAuth;
-    FirebaseUser mUser;
-    SharedPreferences sharedPreferences;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_login);
 
+        mAuth = FirebaseAuth.getInstance();
+        FirebaseUser currentUser = mAuth.getCurrentUser();
+
+        if (currentUser != null && currentUser.isEmailVerified()) {
+            Intent intent = new Intent(LoginActivity.this, MainActivity.class);
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+            finish();
+            return;
+        }
+
         Email = findViewById(R.id.email_input);
         Password = findViewById(R.id.password);
         Submit = findViewById(R.id.login_submit);
         register_button = findViewById(R.id.register);
         login_layout = findViewById(R.id.linearLayout);
-        sharedPreferences = getSharedPreferences("autoLogin", Context.MODE_PRIVATE);
-        int j = sharedPreferences.getInt("key", 0);
 
-        if (j > 0) {
-            Intent redirect_homepage = new Intent(this, MainActivity.class);
-            redirect_homepage.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            startActivity(redirect_homepage);
-            finish();
-            return;
-        }
         register_button.setOnClickListener(v -> {
             try{
                 Intent redirect_register = new Intent(this, RegisterActivity.class);
@@ -60,9 +59,6 @@ public class LoginActivity extends AppCompatActivity {
                         Toast.LENGTH_SHORT).show();
             }
         });
-
-        mAuth = FirebaseAuth.getInstance();
-        mUser = mAuth.getCurrentUser();
 
         login_layout.setAlpha(0.8F);
 
@@ -81,8 +77,8 @@ public class LoginActivity extends AppCompatActivity {
     }
 
     private void perform_login() {
-        email = String.valueOf(Email.getText());
-        password = String.valueOf(Password.getText());
+        email = Objects.requireNonNull(Email.getText()).toString().trim();
+        password = Objects.requireNonNull(Password.getText()).toString();
 
         if(email.isEmpty()){
             Email.setError("Enter email");
@@ -95,34 +91,45 @@ public class LoginActivity extends AppCompatActivity {
             Email.requestFocus();
             return;
         }
-        if(password.length() < 8){
-            Password.setError("Enter valid password");
+
+        if (password.isEmpty()) {
+            Password.setError("Enter password");
             Password.requestFocus();
+            return;
         }
-        else {
-            mAuth.signInWithEmailAndPassword(email, password).addOnCompleteListener(task -> {
-                if(task.isSuccessful()){
-                    mUser = mAuth.getCurrentUser();
-                    assert mUser != null;
-                    if(mUser.isEmailVerified()){
-                        autoSave = 1;
-                        SharedPreferences.Editor editor = sharedPreferences.edit();
-                        editor.putInt("key", autoSave);
-                        editor.apply();
 
-                        Toast.makeText(getApplicationContext(), "Login successful", Toast.LENGTH_SHORT).show();
+        if (password.length() < 8) {
+            Password.setError("Password must be at least 8 characters");
+            Password.requestFocus();
+            return;
+        }
+
+        mAuth.signInWithEmailAndPassword(email, password)
+                .addOnCompleteListener(task -> {
+                    if (task.isSuccessful()) {
+                        FirebaseUser user = mAuth.getCurrentUser();
+                        if (user == null) return;
+
+                        if (!user.isEmailVerified()) {
+                            Toast.makeText(
+                                    this,
+                                    "Please verify your email before logging in",
+                                    Toast.LENGTH_LONG
+                            ).show();
+                            mAuth.signOut();
+                            return;
+                        }
+
+                        Toast.makeText(this, "Login successful", Toast.LENGTH_SHORT).show();
                         send_user_to_next_activity();
+                    } else {
+                        Toast.makeText(
+                                this,
+                                "Invalid email or password",
+                                Toast.LENGTH_SHORT
+                        ).show();
                     }
-                    else{
-                        Toast.makeText(getApplicationContext(), "Please verify your email", Toast.LENGTH_SHORT).show();
-                    }
-                }
-                else{
-                    Toast.makeText(getApplicationContext(), "Login failed", Toast.LENGTH_SHORT).show();
-                }
-            });
-        }
-
+                });
     }
     private void send_user_to_next_activity() {
         Intent intent = new Intent(this, MainActivity.class);

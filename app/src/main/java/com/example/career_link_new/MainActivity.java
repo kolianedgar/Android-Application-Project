@@ -7,7 +7,6 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Context;
 import android.content.Intent;
-import android.content.SharedPreferences;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
@@ -45,109 +44,140 @@ import javax.crypto.spec.SecretKeySpec;
 
 public class MainActivity extends AppCompatActivity {
 
+    /* 🔐 Encryption */
     private static final String AES_KEY = "aB2#xY8qW4zH9!pD3^sF6gV5rT7@jK1v";
-    private static final Key symmetricKey = new SecretKeySpec(AES_KEY.getBytes(StandardCharsets.UTF_8), "AES");
     private static final String AES_MODE = "AES/GCM/NoPadding";
-    private static final int GCM_IV_LENGTH = 12;    // recommended
-    private static final int GCM_TAG_LENGTH = 128;  // bits
+    private static final int GCM_IV_LENGTH = 12;
+    private static final int GCM_TAG_LENGTH = 128;
+    private static final Key symmetricKey =
+            new SecretKeySpec(AES_KEY.getBytes(StandardCharsets.UTF_8), "AES");
 
-    private final String disconnected = "Disconnected!";
-    private final String connected = "Connected!";
-    private EditText nameEditText, messageEditText;
-    private Button connectButton, sendButton;
+    /* UI */
+    private EditText messageEditText;
     private TextView chatTextView;
     private ScrollView chatScrollView;
+    private Button sendButton;
 
-    private String userName;
-
+    /* Firebase */
+    private FirebaseAuth mAuth;
     private DatabaseReference databaseReference;
 
-    private ChildEventListener childEventListener;
+    /* User */
+    private String userName = "";
 
-    private ConnectivityManager.NetworkCallback networkCallback;
-
-    private Queue<Message> messageQueue = new LinkedList<>();
     private boolean isConnected = false;
-    private boolean isChatConnected = false;
+    private boolean wasConnected = false;
 
-    private FirebaseAuth mAuth;
-    private SharedPreferences sharedPreferences;
+    /* Offline queue */
+    private final Queue<Message> messageQueue = new LinkedList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        nameEditText = findViewById(R.id.nameEditText);
+        /* 🔒 Auth check */
+        mAuth = FirebaseAuth.getInstance();
+        if (mAuth.getCurrentUser() == null) {
+            redirectToLogin();
+            return;
+        }
+
+        /* UI */
         messageEditText = findViewById(R.id.messageEditText);
-        connectButton = findViewById(R.id.connectButton);
         sendButton = findViewById(R.id.sendButton);
         chatTextView = findViewById(R.id.chatTextView);
         chatScrollView = findViewById(R.id.chatScrollView);
-
-        messageEditText.setEnabled(false);
         sendButton.setEnabled(false);
 
+        /* Firebase DB */
         FirebaseDatabase database = FirebaseDatabase.getInstance(
                 "https://careerlink-6ce4f-default-rtdb.europe-west1.firebasedatabase.app"
         );
-
         databaseReference = database.getReference("messages");
 
-        childEventListener = new ChildEventListener() {
+        /* Load name + send connected message */
+        loadUserFullName();
+
+        /* Messages listener */
+        /* Listener */
+        ChildEventListener childEventListener = new ChildEventListener() {
             @Override
-            public void onChildAdded(@NonNull DataSnapshot snapshot, @Nullable String previousChildName) {
+            public void onChildAdded(@NonNull DataSnapshot snapshot, @Nullable String s) {
+                String type = snapshot.child("type").getValue(String.class);
                 String user = snapshot.child("userName").getValue(String.class);
                 String encrypted = snapshot.child("message").getValue(String.class);
 
                 if (user == null || encrypted == null) return;
 
-                String message;
-                try {
-                    message = decrypt(encrypted);
-                } catch (Exception e) {
-                    return;
-                }
-
-                appendMessageToChat(user, message);
+                String text = decrypt(encrypted);
+                appendMessageToChat(user, text);
             }
 
-            @Override
-            public void onChildChanged(@NonNull DataSnapshot dataSnapshot, @Nullable String previousChildName) {
-
+            public void onChildChanged(@NonNull DataSnapshot d, @Nullable String s) {
             }
 
-            @Override
-            public void onChildRemoved(@NonNull DataSnapshot dataSnapshot) {
-
+            public void onChildRemoved(@NonNull DataSnapshot d) {
             }
 
-            @Override
-            public void onChildMoved(@NonNull DataSnapshot dataSnapshot, @Nullable String previousChildName) {
-
+            public void onChildMoved(@NonNull DataSnapshot d, @Nullable String s) {
             }
 
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-
+            public void onCancelled(@NonNull DatabaseError e) {
             }
         };
+        databaseReference.addChildEventListener(childEventListener);
 
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+        /* Send */
+        sendButton.setOnClickListener(v -> {
+            String msg = messageEditText.getText().toString().trim();
+            if (msg.isEmpty() || userName.isEmpty()) return;
+            writeMessage(userName, msg);
+            messageEditText.setText("");
+        });
 
-        NetworkRequest networkRequest = new NetworkRequest.Builder()
+        /* Logout */
+        ImageButton logout = findViewById(R.id.logout_button);
+        logout.setOnClickListener(v -> {
+            sendStatusMessage("disconnected");
+
+            mAuth.signOut();
+            redirectToLogin();
+        });
+
+        /* Network */
+        registerNetworkCallback();
+
+        /* Disable back */
+        getOnBackPressedDispatcher().addCallback(this,
+                new OnBackPressedCallback(true) {
+                    @Override public void handleOnBackPressed() {}
+                });
+    }
+
+    /* ---------------- NETWORK ---------------- */
+
+    private void registerNetworkCallback() {
+        ConnectivityManager cm =
+                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+
+        if (cm == null) return;
+
+        NetworkRequest request = new NetworkRequest.Builder()
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build();
 
-        networkCallback = new ConnectivityManager.NetworkCallback() {
+        /* Network */
+        ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
 
             @Override
             public void onAvailable(@NonNull Network network) {
                 runOnUiThread(() -> {
-                    if (!isConnected) {
+                    if (!wasConnected) {
                         Toast.makeText(MainActivity.this,
                                 "Network connected", Toast.LENGTH_SHORT).show();
                     }
+                    wasConnected = true;
                     isConnected = true;
                     flushQueuedMessages();
                 });
@@ -156,262 +186,150 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onLost(@NonNull Network network) {
                 runOnUiThread(() -> {
-                    if (isConnected) {
-                        Toast.makeText(MainActivity.this,
-                                "Network disconnected", Toast.LENGTH_LONG).show();
+                    if (wasConnected) {
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Network disconnected",
+                                Toast.LENGTH_LONG
+                        ).show();
+
+                        sendStatusMessage("network disconnected");
                     }
+                    wasConnected = false;
                     isConnected = false;
                 });
             }
         };
 
-        cm.registerNetworkCallback(networkRequest, networkCallback);
-
-        connectButton.setOnClickListener(v -> {
-            if (!isChatConnected) {
-                userName = nameEditText.getText().toString().trim();
-                if (userName.isEmpty()) return;
-
-                writeMessageToDatabase(userName, connected, success -> {
-                    if (success) {
-                        databaseReference.addChildEventListener(childEventListener);
-                        nameEditText.setEnabled(false);
-                        connectButton.setText("Disconnect");
-                        chatTextView.setText("");
-                        messageEditText.setEnabled(true);
-                        sendButton.setEnabled(true);
-                        isChatConnected = true;
-                    }
-                });
-
-            } else {
-                writeMessageToDatabase(userName, disconnected, success -> {
-                    databaseReference.removeEventListener(childEventListener);
-                    nameEditText.setText("");
-                    nameEditText.setEnabled(true);
-                    connectButton.setText("Connect");
-                    messageEditText.setEnabled(false);
-                    sendButton.setEnabled(false);
-                    isChatConnected = false;
-                });
-            }
-        });
-
-        sendButton.setOnClickListener(view -> {
-            String message = messageEditText.getText().toString ();
-
-            if(message.isEmpty()) return;
-
-            writeMessageToDatabase(userName, message, success -> {
-                if(success){
-                    messageEditText.setText("");
-                }else{
-                    Toast.makeText(getApplicationContext(),"Error Occurred!", Toast.LENGTH_LONG).show();
-                }
-            });
-
-        });
-
-        ImageButton logout_btn = findViewById(R.id.logout_button);
-        logout_btn.setEnabled(true);
-
-        mAuth = FirebaseAuth.getInstance();
-        sharedPreferences = getSharedPreferences("autoLogin", Context.MODE_PRIVATE);
-
-        logout_btn.setOnClickListener(v -> {
-            SharedPreferences.Editor editor = sharedPreferences.edit();
-            editor.putInt("key", 0);
-            editor.apply();
-
-            mAuth.signOut();
-            Intent redirect_login = new Intent(getApplicationContext(), LoginActivity.class);
-            startActivity(redirect_login);
-        });
-        /* 🔒 Disable back button */
-        getOnBackPressedDispatcher().addCallback(this,
-                new OnBackPressedCallback(true) {
-                    @Override
-                    public void handleOnBackPressed() {
-                        // Back button disabled
-                    }
-                });
-
-        if (FirebaseAuth.getInstance().getCurrentUser() == null) {
-            Intent intent = new Intent(this, LoginActivity.class);
-            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            startActivity(intent);
-            finish();
-        }
+        cm.registerNetworkCallback(request, networkCallback);
     }
 
-    private void writeMessageToDatabase(String userName, String message, MessageWriteCallback callback) {
+    /* ---------------- MESSAGES ---------------- */
 
-        if (userName == null || userName.isEmpty() || message == null) {
-            if (callback != null) callback.isSuccess(false);
+    private void writeMessage(String user, String msg) {
+        if (!isConnected) {
+            messageQueue.add(new Message(user, msg));
+            Toast.makeText(this, "Message queued (offline)", Toast.LENGTH_SHORT).show();
             return;
         }
+        sendNow(user, msg);
+    }
 
-        String encryptedMessage = encrypt(message);
+    private void sendNow(String user, String msg) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("type", "chat");
+        map.put("userName", user);
+        map.put("message", encrypt(msg));
+        map.put("timestamp", System.currentTimeMillis());
 
-        HashMap<String, Object> messageHashMap = new HashMap<>();
-        messageHashMap.put("userName", userName);
-        messageHashMap.put("message", encryptedMessage);
-        messageHashMap.put("timestamp", System.currentTimeMillis());
-
-        if (isConnected) {
-
-            String key = databaseReference.push().getKey();
-            if (key == null) {
-                if (callback != null) callback.isSuccess(false);
-                return;
-            }
-
-            databaseReference.child(key)
-                    .setValue(messageHashMap)
-                    .addOnSuccessListener(aVoid -> {
-                        if (callback != null) callback.isSuccess(true);
-                    })
-                    .addOnFailureListener(e -> {
-                        if (callback != null) callback.isSuccess(false);
-                    });
-
-        } else {
-            // OFFLINE MODE
-            messageQueue.offer(new Message(userName, message));
-
-            if (callback != null) {
-                callback.isSuccess(false);
-            }
-
-            runOnUiThread(() -> messageEditText.setText(""));
-        }
+        databaseReference.push().setValue(map)
+                .addOnFailureListener(e ->
+                        messageQueue.add(new Message(user, msg))
+                );
     }
 
     private void flushQueuedMessages() {
-        while (!messageQueue.isEmpty() && isConnected) {
-            Message msg = messageQueue.poll();
-            if (msg == null) return;
-
-            writeMessageToDatabase(
-                    msg.getUserName(),
-                    msg.getMessage(),
-                    success -> {
-                        if (!success) {
-                            Toast.makeText(
-                                    MainActivity.this,
-                                    "Failed to send queued message",
-                                    Toast.LENGTH_SHORT
-                            ).show();
-                        }
-                    }
-            );
-        }
-    }
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-        ConnectivityManager cm =
-                (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
-
-        if (networkCallback != null) {
-            cm.unregisterNetworkCallback(networkCallback);
+        while (!messageQueue.isEmpty()) {
+            Message m = messageQueue.poll();
+            assert m != null;
+            sendNow(m.userName, m.message);
         }
     }
 
-    private String encrypt(String plainText) {
+    /* ---------------- USER ---------------- */
+
+    private void loadUserFullName() {
+        assert mAuth.getCurrentUser() != null;
+        String uid = mAuth.getCurrentUser().getUid();
+
+        FirebaseDatabase.getInstance(
+                        "https://careerlink-6ce4f-default-rtdb.europe-west1.firebasedatabase.app"
+                ).getReference("users").child(uid).child("fullName")
+                .get().addOnSuccessListener(s -> {
+                    if (!s.exists()) return;
+
+                    String full = s.getValue(String.class);
+                    if (full == null) return;
+
+                    userName = full.split(" ")[0]; // first name
+                    sendButton.setEnabled(true);
+
+                    sendConnectedMessage(userName);
+                });
+    }
+
+    private void sendConnectedMessage(String name) {
+        writeMessage(name, "connected!");
+    }
+
+    /* ---------------- UI ---------------- */
+
+    private void appendMessageToChat(String user, String msg) {
+        String line = user + " : " + msg;
+        SpannableString ss = new SpannableString(line);
+        ss.setSpan(new StyleSpan(android.graphics.Typeface.BOLD),
+                0, user.length() + 2, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+        chatTextView.append(ss + "\n");
+        chatScrollView.post(() ->
+                chatScrollView.fullScroll(ScrollView.FOCUS_DOWN));
+    }
+
+    /* ---------------- ENCRYPTION ---------------- */
+
+    private String encrypt(String text) {
         try {
             byte[] iv = new byte[GCM_IV_LENGTH];
-            SecureRandom random = new SecureRandom();
-            random.nextBytes(iv);
+            new SecureRandom().nextBytes(iv);
 
-            Cipher cipher = Cipher.getInstance(AES_MODE);
-            GCMParameterSpec spec =
-                    new GCMParameterSpec(GCM_TAG_LENGTH, iv);
+            Cipher c = Cipher.getInstance(AES_MODE);
+            c.init(Cipher.ENCRYPT_MODE, symmetricKey,
+                    new GCMParameterSpec(GCM_TAG_LENGTH, iv));
 
-            cipher.init(Cipher.ENCRYPT_MODE, symmetricKey, spec);
-
-            byte[] cipherText = cipher.doFinal(
-                    plainText.getBytes(StandardCharsets.UTF_8)
-            );
-
-            // Concatenate IV + ciphertext
-            ByteBuffer byteBuffer =
-                    ByteBuffer.allocate(iv.length + cipherText.length);
-            byteBuffer.put(iv);
-            byteBuffer.put(cipherText);
-
-            return Base64.getEncoder().encodeToString(byteBuffer.array());
-
-        } catch (Exception e) {
-            return "";
-        }
+            byte[] enc = c.doFinal(text.getBytes(StandardCharsets.UTF_8));
+            ByteBuffer bb = ByteBuffer.allocate(iv.length + enc.length);
+            bb.put(iv).put(enc);
+            return Base64.getEncoder().encodeToString(bb.array());
+        } catch (Exception e) { return ""; }
     }
 
-
-    private String decrypt(String encryptedText) {
+    private String decrypt(String enc) {
         try {
-            byte[] decoded = Base64.getDecoder().decode(encryptedText);
-
-            ByteBuffer byteBuffer = ByteBuffer.wrap(decoded);
+            byte[] d = Base64.getDecoder().decode(enc);
+            ByteBuffer bb = ByteBuffer.wrap(d);
 
             byte[] iv = new byte[GCM_IV_LENGTH];
-            byteBuffer.get(iv);
+            bb.get(iv);
 
-            byte[] cipherText = new byte[byteBuffer.remaining()];
-            byteBuffer.get(cipherText);
+            byte[] cipher = new byte[bb.remaining()];
+            bb.get(cipher);
 
-            Cipher cipher = Cipher.getInstance(AES_MODE);
-            GCMParameterSpec spec =
-                    new GCMParameterSpec(GCM_TAG_LENGTH, iv);
+            Cipher c = Cipher.getInstance(AES_MODE);
+            c.init(Cipher.DECRYPT_MODE, symmetricKey,
+                    new GCMParameterSpec(GCM_TAG_LENGTH, iv));
 
-            cipher.init(Cipher.DECRYPT_MODE, symmetricKey, spec);
-
-            byte[] plainText = cipher.doFinal(cipherText);
-
-            return new String(plainText, StandardCharsets.UTF_8);
-
-        } catch (Exception e) {
-            return "";
-        }
+            return new String(c.doFinal(cipher), StandardCharsets.UTF_8);
+        } catch (Exception e) { return ""; }
     }
 
+    /* ---------------- UTILS ---------------- */
 
-    private void appendMessageToChat(String userName, String message) {
-        String userNameText =  userName + " : ";
-        String fullText = userNameText + message;
-
-        SpannableString spannableString = new SpannableString(fullText);
-        int startIndex = fullText.indexOf(userNameText);
-        int endIndex = startIndex + userNameText.length();
-        spannableString.setSpan(new StyleSpan(android.graphics.Typeface.BOLD), startIndex, endIndex, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-
-        if(!chatTextView.getText().toString().isEmpty()){
-            chatTextView.append("\n");
-        }
-        chatTextView.append(spannableString + "\n");
-
-        chatScrollView.post(() -> chatScrollView.fullScroll(ScrollView.FOCUS_DOWN));
+    private void redirectToLogin() {
+        Intent i = new Intent(this, LoginActivity.class);
+        i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        startActivity(i);
+        finish();
     }
 
-    interface MessageWriteCallback {
-        void isSuccess(boolean success);
+    private void sendStatusMessage(String text) {
+        if (userName == null || userName.isEmpty()) return;
+
+        writeMessage(userName, text);
     }
 
     static class Message {
-        private final String userName;
-        private final String message;
-
-        public Message(String userName, String message) {
-            this.userName = userName;
-            this.message = message;
-        }
-
-        public String getUserName() {
-            return this.userName;
-        }
-
-        public String getMessage() {
-            return this.message;
-        }
+        final String userName;
+        final String message;
+        Message(String u, String m) { userName = u; message = m; }
     }
 }
