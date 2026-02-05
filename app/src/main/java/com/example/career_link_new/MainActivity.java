@@ -139,6 +139,8 @@ public class MainActivity extends AppCompatActivity {
         /* Logout */
         ImageButton logout = findViewById(R.id.logout_button);
         logout.setOnClickListener(v -> {
+            sendStatusMessage("disconnected");
+
             mAuth.signOut();
             redirectToLogin();
         });
@@ -185,8 +187,13 @@ public class MainActivity extends AppCompatActivity {
             public void onLost(@NonNull Network network) {
                 runOnUiThread(() -> {
                     if (wasConnected) {
-                        Toast.makeText(MainActivity.this,
-                                "Network disconnected", Toast.LENGTH_LONG).show();
+                        Toast.makeText(
+                                MainActivity.this,
+                                "Network disconnected",
+                                Toast.LENGTH_LONG
+                        ).show();
+
+                        sendStatusMessage("network disconnected");
                     }
                     wasConnected = false;
                     isConnected = false;
@@ -252,12 +259,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void sendConnectedMessage(String name) {
-        HashMap<String, Object> map = new HashMap<>();
-        map.put("type", "system");
-        map.put("userName", name);
-        map.put("message", encrypt("connected!"));
-        map.put("timestamp", System.currentTimeMillis());
-        databaseReference.push().setValue(map);
+        writeMessage(name, "connected!");
     }
 
     /* ---------------- UI ---------------- */
@@ -317,6 +319,12 @@ public class MainActivity extends AppCompatActivity {
         i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
         startActivity(i);
         finish();
+    }
+
+    private void sendStatusMessage(String text) {
+        if (userName == null || userName.isEmpty()) return;
+
+        writeMessage(userName, text);
     }
 
     static class Message {
