@@ -45,7 +45,7 @@ import javax.crypto.spec.SecretKeySpec;
 public class MainActivity extends AppCompatActivity {
 
     /* 🔐 Encryption */
-    private static final String AES_KEY = "aB2#xY8qW4zH9!pD3^sF6gV5rT7@jK1v";
+    private static final String AES_KEY = "REPLACE-WITH-YOUR-AES-KEY";
     private static final String AES_MODE = "AES/GCM/NoPadding";
     private static final int GCM_IV_LENGTH = 12;
     private static final int GCM_TAG_LENGTH = 128;
